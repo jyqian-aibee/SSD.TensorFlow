@@ -10,7 +10,6 @@ import threading
 import numpy as np
 import six
 import tensorflow as tf
-import dataset_common
 import argparse
 import json
 
@@ -49,26 +48,27 @@ def _bytes_feature(value):
 
 
 def load_dataset(dataset_path, num_threads):
+    """
+    Load coco format dataset, and split into several small dictionaries for each thread to use.
+    """
     big_dict = dict()
     output_dicts = []
     with open(dataset_path, 'rb') as f:
         dataset = json.load(f)
     for instance in dataset['annotations']:
         img_id = instance['image_id']
-        if dataset['images'][img_id] not in big_dict:
-            big_dict[dataset['images'][img_id]] = []
-        big_dict[dataset['images'][img_id]].append(instance['bbox'])
+        if dataset['images'][img_id]['file_name'] not in big_dict:
+            big_dict[dataset['images'][img_id]['file_name']] = []
+        big_dict[dataset['images'][img_id]['file_name']].append(instance['bbox'])
     len_instances = len(big_dict)
     pics_per_dict = len_instances // num_threads
     for i in range(num_threads):
         if i != num_threads - 1:
-            dic = dict(big_dict.items()[i*pics_per_dict:(i+1)*pics_per_dict])
+            dic = dict(list(big_dict.items())[i * pics_per_dict:(i + 1) * pics_per_dict])
         else:
-            dic = dict(big_dict.items()[i*pics_per_dict:])
+            dic = dict(list(big_dict.items())[i * pics_per_dict:])
         output_dicts.append(dic)
-
-
-    return output_dataset
+    return output_dicts
 
 
 def _process_image(filename, coder):
@@ -114,7 +114,7 @@ def create_tf_example(filename, image_buffer, bboxes, labels, height, width):
 
     for b in bboxes:
         assert len(b) == 4
-        [l.append(point) for l, piont in zip([xmins, ymins, xmaxs, ymaxs], b)]
+        [l.append(point) for l, point in zip([xmins, ymins, xmaxs, ymaxs], b)]
     tf_label_and_data = tf.train.Example(features=tf.train.Features(feature={
         'image/height': _int64_feature(height),
         'image/width': _int64_feature(width),
@@ -175,19 +175,18 @@ def _thread_func(coder, thread_meta, subset, directory, num_shards, name='Train'
     items = list(subset.items())
     for shard_index in range(num_shards):
         start = time.time()
-        shard = thread_index * num_shrads + shard_index
+        shard = thread_index * num_shards + shard_index
         output_name = '{}-{:03d}-of-{:03d}'.format(name, shard, total_threads * num_shards)
         output_file = os.path.join(directory, output_name)
         writer = tf.python_io.TFRecordWriter(output_file)
-        if shard_indx != num_shards -1:
-            items_to_shard = items[pictures_per_shard:(pictures_per_shard+1)]
+        if shard_index != num_shards - 1:
+            items_to_shard = items[pictures_per_shard:(pictures_per_shard + 1)]
         else:
             items_to_shard = items[pictures_per_shard:]
 
         for i, item in enumerate(items_to_shard):
             filename, bboxes = item
-            labels = [box[4] for box in bboxes]
-            bboxes = [box[:4] for box in boxes]
+            labels = [1] * len(bboxes)
             image_buffer, height, width = _process_image(filename, coder)
             example = create_tf_example(filename, image_buffer, bboxes, labels, height, width)
             writer.write(example.SerializeToString())
@@ -196,10 +195,11 @@ def _thread_func(coder, thread_meta, subset, directory, num_shards, name='Train'
                 print('Thread {}: processed {} images.'.format(thread_index, i))
         stop = time.time()
         writer.close()
-        print('Wrote {} images to {}. Time: {:.2f}'.format(len(items_to_shard), output_file, stop - start))
+        print('Thread {}: wrote {} images to {}. Time: {:.2f}'.format(thread_index, len(items_to_shard), output_file,
+                                                                      stop - start))
 
 
-def convert_dataset_to_tfrecords(dataset_dir, out_dir, num_threads=4, name='Train'):
+def convert_dataset_to_tfrecords(dataset_dir, out_dir, num_threads=8, name='Train'):
     # Load dataset
     dataset_list = load_dataset(dataset_dir, num_threads)
     coord = tf.train.Coordinator()
@@ -207,7 +207,7 @@ def convert_dataset_to_tfrecords(dataset_dir, out_dir, num_threads=4, name='Trai
 
     threads = []
     for thread_index in range(num_threads):
-        args = (coder, [thread_index,num_threads], dataset_list[thread_index], out_dir, 4, name)
+        args = (coder, [thread_index, num_threads], dataset_list[thread_index], out_dir, 4, name)
         t = threading.Thread(target=_thread_func, args=args)
         t.start()
         threads.append(t)
@@ -221,6 +221,6 @@ if __name__ == '__main__':
     ap.add_argument("coco", type=str, help="coco file to be transferred to tfrecords")
     ap.add_argument("output", type=str, help="output root directory")
     ap.add_argument("--name", type=str, default="aibee-train", required=False, help="output tfrecords name prefix")
-    ap.add_argument("-t", "--threads", type=int, default=8, required=False, help="number of threads to work")
+    ap.add_argument("-t", "--threads", type=int, default=4, required=False, help="number of threads to work")
     args = ap.parse_args()
     convert_dataset_to_tfrecords(args.coco, args.output, args.threads)

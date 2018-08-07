@@ -102,3 +102,8 @@ ENV/
 
 # Pycharm
 .idea/*
+
+# model files
+*ckpt*
+*events*
+*.pbtxt
