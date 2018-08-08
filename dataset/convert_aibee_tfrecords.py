@@ -53,7 +53,7 @@ def load_dataset(dataset_path, num_threads):
     """
     big_dict = dict()
     output_dicts = []
-    with open(dataset_path, 'rb') as f:
+    with open(dataset_path, 'r', encoding='latin-1') as f:
         dataset = json.load(f)
     for instance in dataset['annotations']:
         img_id = instance['image_id']
@@ -68,6 +68,8 @@ def load_dataset(dataset_path, num_threads):
         else:
             dic = dict(list(big_dict.items())[i * pics_per_dict:])
         output_dicts.append(dic)
+    lens = [len(dic) for dic in output_dicts]
+    print('Generated {} dicts, with size {}'.format(len(output_dicts), lens))
     return output_dicts
 
 
@@ -180,10 +182,9 @@ def _thread_func(coder, thread_meta, subset, directory, num_shards, name='Train'
         output_file = os.path.join(directory, output_name)
         writer = tf.python_io.TFRecordWriter(output_file)
         if shard_index != num_shards - 1:
-            items_to_shard = items[pictures_per_shard:(pictures_per_shard + 1)]
+            items_to_shard = items[shard_index * pictures_per_shard: (shard_index + 1) * pictures_per_shard]
         else:
-            items_to_shard = items[pictures_per_shard:]
-
+            items_to_shard = items[shard_index * pictures_per_shard:]
         for i, item in enumerate(items_to_shard):
             filename, bboxes = item
             labels = [1] * len(bboxes)
